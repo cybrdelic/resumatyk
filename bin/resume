@@ -1,0 +1,123 @@
+#!/bin/bash
+
+source "$HOME/.local/share/resumatyk/lib/config.sh"
+source "$HOME/.local/share/resumatyk/lib/utils.sh"
+source "$HOME/.local/share/resumatyk/lib/finder.sh"
+source "$HOME/.local/share/resumatyk/lib/selector.sh"
+source "$HOME/.local/share/resumatyk/lib/email.sh"
+source "$HOME/.local/share/resumatyk/lib/variant_generator.sh"
+source "$HOME/.local/share/resumatyk/lib/resume_manager.sh"
+
+SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")/lib"
+VERSION="1.0.0"
+
+# Show help
+show_help() {
+    cat << EOF
+Resumatyk v${VERSION}
+Usage: resume [command]
+
+Commands:
+    list        List all resumes
+    edit        Select and edit a resume
+    compile     Select and compile a resume
+    view        Select and view a PDF
+    email       Select and email a resume
+    variant     Manage resume variants
+    clean       Clean auxiliary files
+    help        Show this help message
+    version     Show version information
+
+If no command is provided, launches interactive mode.
+EOF
+}
+
+# Parse command line arguments
+if [ $# -gt 0 ]; then
+    case "$1" in
+        "list")
+            find_resumes | column -t -s $'\t'
+            ;;
+        "edit")
+            selected=$(select_resume)
+            [ -n "$selected" ] && micro "$RESUME_DIR/$selected"
+            ;;
+        "compile")
+            selected=$(select_resume)
+            [ -n "$selected" ] && compile_latex "$RESUME_DIR/$selected"
+            ;;
+        "view")
+            selected=$(select_resume)
+            [ -n "$selected" ] && {
+                pdf_file="${RESUME_DIR}/${selected%.tex}.pdf"
+                [ -f "$pdf_file" ] && zathura "$pdf_file" &
+            }
+            ;;
+        "email")
+            selected=$(select_resume)
+            [ -n "$selected" ] && {
+                pdf_file="${RESUME_DIR}/${selected%.tex}.pdf"
+                [ -f "$pdf_file" ] && send_email "$pdf_file"
+            }
+            ;;
+        "variant")
+            selected=$(select_resume)
+            [ -n "$selected" ] && {
+                base=$(basename "$selected" .tex)
+                variant_action=$(echo -e "List\nCreate\nEdit\nView\nEmail" | \
+                    fzf --prompt="Choose Variant Action: ")
+                case "$variant_action" in
+                    "List")
+                        find_variants "$base" | column -t -s $'\t'
+                        ;;
+                    "Create")
+                        read -rp "Variant name (without .tex): " variant_name
+                        read -rp "Theme description: " context
+                        [ -n "$variant_name" ] && [ -n "$context" ] && \
+                            generate_variant "$RESUME_DIR/$selected" "$variant_name" "$context"
+                        ;;
+                    "Edit"|"View"|"Email")
+                        variant=$(select_variant "$base")
+                        [ -n "$variant" ] && {
+                            case "$variant_action" in
+                                "Edit")
+                                    micro "$RESUME_DIR/variants/$base/$variant"
+                                    ;;
+                                "View")
+                                    pdf_path="$RESUME_DIR/variants/$base/${variant%.tex}.pdf"
+                                    [ -f "$pdf_path" ] && zathura "$pdf_path" &
+                                    ;;
+                                "Email")
+                                    pdf_path="$RESUME_DIR/variants/$base/${variant%.tex}.pdf"
+                                    [ -f "$pdf_path" ] && send_email "$pdf_path"
+                                    ;;
+                            esac
+                        }
+                        ;;
+                esac
+            }
+            ;;
+        "clean")
+            selected=$(select_resume)
+            [ -n "$selected" ] && {
+                dir=$(dirname "$RESUME_DIR/$selected")
+                base=$(basename "$selected" .tex)
+                clean_aux_files "$base" "$dir"
+            }
+            ;;
+        "help")
+            show_help
+            ;;
+        "version")
+            echo "Resumatyk v${VERSION}"
+            ;;
+        *)
+            echo "Unknown command: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+else
+    # No arguments, run in interactive mode using the resume manager
+    main "$@"
+fi
