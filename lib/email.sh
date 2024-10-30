@@ -1,22 +1,24 @@
 #!/bin/bash
 
 source "$HOME/.local/share/resumatyk/lib/config.sh"
-
-
-SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+source "$HOME/.local/share/resumatyk/lib/logger.sh"
 
 # Function to send email
 send_email() {
     local pdf_file="$1"
 
-    [ ! -f "$pdf_file" ] && { log_debug "PDF file not found: $pdf_file"; return 1; }
-    [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ] && {
-        log_debug "Error: Email credentials not set!"
-        log_debug "Please ensure SMTP_USER and SMTP_PASS are set in your ~/.zshrc"
+    if [ ! -f "$pdf_file" ]; then
+        log "error" "PDF file not found: $pdf_file"
         return 1
-    }
+    fi
+    if [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then
+        log "error" "Email credentials not set!"
+        log "info" "Please ensure SMTP_USER and SMTP_PASS are set in your ~/.zshrc"
+        return 1
+    fi
 
-    local TEMP_EMAIL=$(mktemp)
+    local TEMP_EMAIL
+    TEMP_EMAIL=$(mktemp)
     local BOUNDARY="------------$(date +%Y%m%d%H%M%S)"
 
     {
@@ -41,7 +43,7 @@ send_email() {
         echo -e "\r"
         echo -e "--$BOUNDARY--\r"
         echo -e "\r.\r"
-    } > "$TEMP_EMAIL"
+    } >"$TEMP_EMAIL"
 
     curl --url "smtps://smtp.gmail.com:465" \
         --ssl-reqd \
@@ -55,12 +57,12 @@ send_email() {
         --retry 3 \
         --retry-delay 5 \
         --retry-max-time 60 && {
-        log_debug "Resume sent successfully!"
+        log "success" "Resume sent successfully!"
         rm "$TEMP_EMAIL"
         return 0
     } || {
-        log_debug "Failed to send email. Error code: $?"
-        log_debug "Failed email content preserved at: $TEMP_EMAIL"
+        log "error" "Failed to send email. Error code: $?"
+        log "error" "Failed email content preserved at: $TEMP_EMAIL"
         return 1
     }
 }

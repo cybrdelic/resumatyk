@@ -1,9 +1,7 @@
 #!/bin/bash
 
 source "$HOME/.local/share/resumatyk/lib/finder.sh"
-
-SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-
+source "$HOME/.local/share/resumatyk/lib/logger.sh"
 
 # Function to select resume
 select_resume() {
@@ -15,8 +13,8 @@ select_resume() {
         --delimiter='\t' \
         --preview 'echo {}' \
         --preview-window=up:3:wrap \
-        --header="Use arrows to navigate, Enter to select" \
-        | cut -f1
+        --header="Use arrows to navigate, Enter to select" |
+        cut -f1
 }
 
 # Function to select variant
@@ -30,6 +28,6 @@ select_variant() {
         --delimiter='\t' \
         --preview "cat '$RESUME_DIR/variants/$resume_base/{}' | head -n 20" \
         --preview-window=up:3:wrap \
-        --header="Use arrows to navigate, Enter to select" \
-        | cut -f1
+        --header="Use arrows to navigate, Enter to select" |
+        cut -f1
 }

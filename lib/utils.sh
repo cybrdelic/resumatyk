@@ -1,17 +1,16 @@
 #!/bin/bash
 
+source "$HOME/.local/share/resumatyk/lib/logger.sh"
 source "$HOME/.local/share/resumatyk/lib/config.sh"
-
-SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
 # Function to clean auxiliary files
 clean_aux_files() {
     local base="$1"
     local dir="$2"
     (
-        cd "$dir" && \
-        rm -f "$base.aux" "$base.log" "$base.out" "$base.toc" "$base.synctex.gz" && \
-        log_debug "Cleaned auxiliary files for '$base.tex'"
+        cd "$dir" &&
+            rm -f "$base.aux" "$base.log" "$base.out" "$base.toc" "$base.synctex.gz" &&
+            log "cleanup" "Cleaned auxiliary files for '$base.tex'"
     )
 }
 
@@ -20,46 +19,60 @@ json_escape() {
     printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'
 }
 
-# Function to compile LaTeX file
 compile_latex() {
-    local tex_file="$1"
-    local dir=$(dirname "$tex_file")
-    local base=$(basename "$tex_file")
-
-    (cd "$dir" && pdflatex -interaction=nonstopmode "$base")
-    return $?
-}
-
-compile_and_check() {
     local tex_file="$1"
     local dir=$(dirname "$tex_file")
     local base=$(basename "$tex_file")
     local log_file="$dir/${base%.tex}.log"
 
-    # Create the directory if it doesn't exist
     mkdir -p "$dir"
 
-    # First try XeLaTeX for better font support
-    (cd "$dir" && xelatex -interaction=nonstopmode "$base" > /dev/null 2>&1)
+    log "compile" "Compiling $base with XeLaTeX..."
+    (cd "$dir" && xelatex -interaction=nonstopmode "$base" >/dev/null 2>&1)
     local compile_status=$?
 
-    # If XeLaTeX fails, try regular pdflatex
     if [ $compile_status -ne 0 ]; then
-        (cd "$dir" && pdflatex -interaction=nonstopmode "$base" > /dev/null 2>&1)
-        compile_status=$?
-    fi
-
-    # Check if log file exists before trying to read it
-    if [ ! -f "$log_file" ]; then
-        echo "Compilation failed: No log file generated"
+        # Extract error messages from log
+        if [ -f "$log_file" ]; then
+            local error_msg=$(grep -A1 '^!' "$log_file" | sed 's/\\/\\\\/g')
+            log "error" "Compilation failed: $error_msg"
+        else
+            log "error" "Compilation failed: No log file generated"
+        fi
         return 1
     fi
+    log "success" "Compilation succeeded for $base"
+    return 0
+}
+
+# Enhanced compile and check function
+compile_and_check() {
+    local tex_file="$1"
+    local dir
+    dir=$(dirname "$tex_file")
+    local base
+    base=$(basename "$tex_file")
+    local log_file="$dir/${base%.tex}.log"
+
+    mkdir -p "$dir"
+
+    log "compile" "Compiling $base with XeLaTeX..."
+    (cd "$dir" && xelatex -interaction=nonstopmode "$base" >/dev/null 2>&1)
+    local compile_status=$?
 
     if [ $compile_status -ne 0 ]; then
-        local error_msg=$(awk '/^!/ {p=1;print;next} p&&/^l\.[0-9]/ {print;p=0}' "$log_file" | \
-                        sed 's/\\/\\\\/g' | tr '\n' ' ')
-        echo "$error_msg"
+        # Extract error messages from log
+        if [ -f "$log_file" ]; then
+            local error_msg
+            error_msg=$(grep -A1 '^!' "$log_file" | sed 's/\\/\\\\/g')
+            log "error" "Compilation failed: $error_msg"
+            echo "$error_msg"
+        else
+            log "error" "Compilation failed: No log file generated"
+            echo "Compilation failed: No log file generated"
+        fi
         return 1
     fi
+    log "success" "Compilation succeeded for $base"
     return 0
 }

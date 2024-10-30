@@ -1,135 +1,161 @@
 #!/bin/bash
 
+source "$HOME/.local/share/resumatyk/lib/logger.sh"
 source "$HOME/.local/share/resumatyk/lib/config.sh"
 source "$HOME/.local/share/resumatyk/lib/utils.sh"
 source "$HOME/.local/share/resumatyk/lib/content_extractor.sh"
 
-SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-
-# Function to generate themed variant using Claude
+# Function to generate themed variant with improved content handling
 generate_variant() {
     local resume_file="$1"
     local variant_name="$2"
-    local context="$3"
+    local theme="$3"
     local resume_base=$(basename "$resume_file" .tex)
     local variants_dir="$RESUME_DIR/variants/$resume_base"
     local max_retries=3
     local retry_count=0
 
-    [ -z "$ANTHROPIC_API_KEY" ] && {
-        log_debug "Error: ANTHROPIC_API_KEY not set in ~/.zshrc"
-        return 1
-    }
-
     mkdir -p "$variants_dir"
 
-    # Extract structured content
-    local structured_content=$(extract_resume_content "$resume_file")
+    # Extract content and ensure it's captured
+    log "info" "Extracting content from $resume_file"
+    local content=$(extract_resume_content "$resume_file")
 
-    log_debug "Extracted structured content"
+    if [ -z "$content" ]; then
+        log "error" "Failed to extract content from $resume_file"
+        return 1
+    fi
 
-    while [ $retry_count -lt $max_retries ]; do
-        local prompt
-        if [ $retry_count -eq 0 ]; then
-            prompt=prompt="You are a creative LaTeX designer. Create a highly stylized Barbie-themed resume with modern UI/UX principles.
+    log "info" "Extracted content length: $(echo "$content" | wc -l) lines"
+    format_llm_output "start"
 
-STYLE REQUIREMENTS:
-1. Use XeLaTeX for advanced font and color support
-2. Required packages to include:
-   \\usepackage{tikz}
-   \\usepackage{tcolorbox}
-   \\usepackage[dvipsnames]{xcolor}
+    # Create prompt with explicit content
+    local base_prompt="Create a professional LaTeX resume with this theme: '${theme}'
+
+Requirements:
+1. Use only these packages:
    \\usepackage{fontspec}
-   \\usepackage{background}
-   \\usepackage{geometry}
+   \\usepackage{xcolor}
+   \\usepackage{enumitem}
+   \\usepackage{hyperref}
+   \\usepackage{tikz}
+   \\usepackage[margin=1cm]{geometry}
 
-COLOR PALETTE:
-- Barbie Pink (#FF69B4)
-- Soft Pink (#FFB6C1)
-- White (#FFFFFF)
-- Accent colors as needed
+2. Font requirements:
+   - Use \\setmainfont{DejaVu Serif}
+   - Use \\setsansfont{DejaVu Sans} for sans-serif
+   - No other font packages or commands
 
-DESIGN ELEMENTS TO INCLUDE:
-1. Custom background pattern or design using tikz
-2. Stylized headers with decorative elements
-3. Creative section dividers
-4. Modern typography using fontspec
-5. Elegant box layouts with tcolorbox
-6. Professional yet playful layout
+3. Styling:
+   - Define colors using \\definecolor
+   - Create custom commands for consistent styling
+   - No math mode ([]) for spacing - use \\vspace instead
+   - Avoid icon fonts or symbol packages
 
-The design should be:
-- Highly visual and modern
-- Professional yet creative
-- Clean and readable
-- Uniquely styled
-
-Raw content to style:
-$structured_content
-
-Technical Requirements:
-1. Must be a complete XeLaTeX document
-2. Include all necessary packages
-3. Define all custom colors and styles
-4. No placeholders or partial code
-5. Must compile without errors
+Content to style:
+$content
 
 Return ONLY the complete LaTeX code."
-        else
-            local error_msg=$(compile_and_check "$variants_dir/$variant_name.tex")
-            prompt="The LaTeX template has these compilation errors: $error_msg
 
-The template should maintain its creative interpretation of this theme: \"${context}\"
+    while [ $retry_count -lt $max_retries ]; do
+        local prompt="$base_prompt"
+        format_llm_output "prompt" "$prompt"
 
-Original content:
-$structured_content
-
-Fix the errors while preserving the unique design. Return ONLY the corrected LaTeX code. Return the entire code with no placeholders. Think deeply about the errors and their solutions, but dont show your thought process. The final code should be clean and error-free."
-        fi
-
-        local escaped_prompt=$(json_escape "$prompt")
-
-        log_debug "Attempt $((retry_count + 1)) of $max_retries..."
-
-        # Call Claude API with increased tokens for more creative freedom
-        local temp_response=$(mktemp)
-        curl -s https://api.anthropic.com/v1/messages \
+        # Get response from AI
+        local response
+        response=$(curl -s https://api.anthropic.com/v1/messages \
             -H "content-type: application/json" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
-            -d '{
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 4000,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": '"$escaped_prompt"'
-                    }
-                ]
-            }' > "$temp_response"
+            -d "{
+                \"model\": \"claude-3-5-sonnet-latest\",
+                \"max_tokens\": 4000,
+                \"messages\": [{
+                    \"role\": \"user\",
+                    \"content\": $(json_escape "$prompt")
+                }]
+            }" | jq -r '.content[0].text')
 
-        # Extract template
-        local template=$(jq -r '.content[0].text' "$temp_response" | sed -n '/\\documentclass/,${p;/\\end{document}/q}')
+        # Extract LaTeX code
+        local template
+        template=$(echo "$response" | sed -n '/\\documentclass/,/\\end{document}/p')
 
         if [ -n "$template" ]; then
-            log_debug "Writing template to $variants_dir/$variant_name.tex"
-            echo "$template" > "$variants_dir/$variant_name.tex"
+            # Save template
+            log "info" "Writing generated template to $variants_dir/$variant_name.tex"
+            echo "$template" >"$variants_dir/$variant_name.tex"
 
-            if compile_and_check "$variants_dir/$variant_name.tex"; then
-                log_debug "Variant compiled successfully"
+            # Validate and fix
+            validate_and_fix_latex "$variants_dir/$variant_name.tex"
+
+            # Try compilation
+            if compile_latex "$variants_dir/$variant_name.tex"; then
+                format_llm_output "success"
                 clean_aux_files "$variant_name" "$variants_dir"
                 return 0
             else
                 retry_count=$((retry_count + 1))
-                [ $retry_count -lt $max_retries ] && log_debug "Compilation failed. Requesting fixes from Claude..." || \
-                    log_debug "Maximum retries reached. Last compilation errors:"
-                compile_and_check "$variants_dir/$variant_name.tex"
+                if [ $retry_count -lt $max_retries ]; then
+                    # Update prompt with error info
+                    local errors=$(get_latex_errors "$variants_dir/$variant_name.tex")
+                    prompt="Fix these LaTeX errors while preserving the theme:
+
+$errors
+
+Original content:
+$content
+
+Return the complete fixed LaTeX code."
+                else
+                    log "error" "Failed to generate valid LaTeX after $max_retries attempts"
+                    return 1
+                fi
             fi
         else
-            log_debug "Failed to generate variant. API response:"
-            cat "$temp_response"
+            log "error" "Failed to get valid response from AI"
             return 1
         fi
     done
 
     return 1
+}
+
+# Helper function to validate and fix LaTeX code
+validate_and_fix_latex() {
+    local tex_file="$1"
+    local content=$(<"$tex_file")
+
+    # Required elements
+    if ! grep -q '\\documentclass' "$tex_file"; then
+        content="\\documentclass[11pt,a4paper]{article}\n$content"
+    fi
+
+    if ! grep -q '\\usepackage{fontspec}' "$tex_file"; then
+        content=$(echo "$content" | sed '/\\documentclass/a \\usepackage{fontspec}')
+    fi
+
+    if ! grep -q '\\setmainfont' "$tex_file"; then
+        content=$(echo "$content" | sed '/\\usepackage{fontspec}/a \\setmainfont{DejaVu Serif}')
+    fi
+
+    # Fix common errors
+    content=$(echo "$content" | sed \
+        -e 's/\\\[/\\vspace{/g' \
+        -e 's/\\\]/}/g' \
+        -e '/\\usepackage{.*fontawesome.*}/d' \
+        -e 's/\\fa[A-Za-z]*/\\textbullet/g')
+
+    echo "$content" >"$tex_file"
+}
+
+# Helper function to get LaTeX errors
+get_latex_errors() {
+    local tex_file="$1"
+    local log_file="${tex_file%.tex}.log"
+
+    if [ -f "$log_file" ]; then
+        grep -A1 '^!' "$log_file" | head -n 10
+    else
+        echo "No log file found"
+    fi
 }

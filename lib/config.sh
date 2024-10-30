@@ -10,7 +10,4 @@ MAX_DEPTH=3
 # Create necessary directories
 [ ! -d "$RESUME_DIR" ] && mkdir -p "$RESUME_DIR"
 
-# Function to log debug messages
-log_debug() {
-    echo "[$(date '+%H:%M:%S')] $*"
-}
+source "$HOME/.local/share/resumatyk/lib/logger.sh"

@@ -1,73 +1,73 @@
 #!/bin/bash
 
-source "$(dirname "$0")/config.sh"
+source "$HOME/.local/share/resumatyk/lib/config.sh"
+source "$HOME/.local/share/resumatyk/lib/logger.sh"
 
-# Function to extract content with design flexibility
+# Function to extract resume content while preserving structure
 extract_resume_content() {
     local file="$1"
     local temp_file=$(mktemp)
 
-    awk '
-    BEGIN {
-        in_document = 0
-        print "# Raw Content"
-    }
-    /\\begin{document}/ { in_document = 1; next }
-    /\\end{document}/ { in_document = 0; next }
-    in_document {
-        # Extract name without formatting
-        if ($0 ~ /\\name{.*}/) {
-            gsub(/\\name{|}/, "")
-            print "NAME:" $0
-            next
-        }
-        # Extract email without formatting
-        if ($0 ~ /\\email{.*}/) {
-            gsub(/\\email{|}/, "")
-            print "CONTACT:EMAIL:" $0
-            next
-        }
-        # Extract phone without formatting
-        if ($0 ~ /\\phone{.*}/) {
-            gsub(/\\phone{|}/, "")
-            print "CONTACT:PHONE:" $0
-            next
-        }
-        # Extract section titles without formatting
-        if ($0 ~ /\\section{.*}/) {
-            gsub(/\\section{|}/, "")
-            print "SECTION:" $0
-            next
-        }
-        # Extract subsection titles without formatting
-        if ($0 ~ /\\subsection{.*}/) {
-            gsub(/\\subsection{|}/, "")
-            print "SUBSECTION:" $0
-            next
-        }
-        # Extract item content without formatting
-        if ($0 ~ /\\item/) {
-            gsub(/^[ \t]*\\item[ \t]*/, "")
-            # Remove all remaining LaTeX commands
-            gsub(/\\[a-zA-Z]+{[^}]*}/, "")
-            gsub(/\\[a-zA-Z]+/, "")
-            if (length($0) > 0) {
-                print "ITEM:" $0
-            }
-            next
-        }
-        # Extract plain text without any LaTeX formatting
-        if (length($0) > 0 && $0 !~ /^[ \t]*$/ && $0 !~ /^[ \t]*\\/) {
-            # Remove all LaTeX commands
-            gsub(/\\[a-zA-Z]+{[^}]*}/, "")
-            gsub(/\\[a-zA-Z]+/, "")
-            if (length($0) > 0) {
-                print "TEXT:" $0
-            }
-        }
-    }
-    ' "$file" > "$temp_file"
+    # First pass: Extract content between \begin{document} and \end{document}
+    sed -n '/\\begin{document}/,/\\end{document}/p' "$file" >"$temp_file"
 
-    cat "$temp_file"
+    # Process and clean up the content
+    cat "$temp_file" |
+        # Remove LaTeX comments
+        sed 's/%.*$//' |
+        # Preserve important structural elements
+        sed -e 's/\\section{/\nsection\n/g' \
+            -e 's/\\subsection{/\nsubsection\n/g' \
+            -e 's/\\begin{itemize}/\nitemize\n/g' \
+            -e 's/\\begin{center}/\ncenter\n/g' \
+            -e 's/\\end{itemize}/itemize\n/g' \
+            -e 's/\\end{center}/center\n/g' \
+            -e 's/\\item */\nitem /' |
+        # Convert common LaTeX commands
+        sed -e 's/\\textbf{\([^}]*\)}/\1/g' \
+            -e 's/\\textit{\([^}]*\)}/\1/g' \
+            -e 's/\\emph{\([^}]*\)}/\1/g' \
+            -e 's/\\href{[^}]*}{\([^}]*\)}/\1/g' \
+            -e 's/\\url{\([^}]*\)}/\1/g' \
+            -e 's/\\vspace{[^}]*}//' |
+        # Handle special spacing commands
+        sed -e 's/\\smallskip//' \
+            -e 's/\\medskip//' \
+            -e 's/\\bigskip//' \
+            -e 's/\\quad/ /g' \
+            -e 's/\\,/ /g' |
+        # Remove remaining LaTeX commands and braces
+        sed -e 's/\\[[:alpha:]]*{//g' \
+            -e 's/}//g' \
+            -e 's/\\[[:alpha:]]*\[[^]]*\]//g' |
+        # Clean up whitespace
+        sed -e 's/^[ \t]*//g' \
+            -e 's/[ \t]*$//g' \
+            -e '/^$/d' |
+        # Preserve special markers
+        sed -e 's/neo_accent|/neo_accent|/g' |
+        # Final cleanup - remove unwanted lines
+        grep -v '^\\' |
+        grep -v '^document$' |
+        grep -v '^begin{.*}$' |
+        grep -v '^end{.*}$' |
+        grep -v '^\s*$'
+
     rm "$temp_file"
 }
+
+# Test if running directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    if [ "$1" ]; then
+        if [ -f "$1" ]; then
+            log "info" "Extracting content from $1"
+            extract_resume_content "$1"
+        else
+            log "error" "File not found: $1"
+            exit 1
+        fi
+    else
+        log "error" "Usage: $0 <tex-file>"
+        exit 1
+    fi
+fi
